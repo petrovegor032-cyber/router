@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>AudioDisk - Маршрутизатор ПК</title>
+    <style>
+        body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 20px; margin: 0; }
+        .log { background: #111; padding: 15px; border-radius: 8px; height: calc(100vh - 120px); overflow-y: auto; font-size: 13px; }
+        .status { position: fixed; bottom: 10px; left: 10px; right: 10px; background: #1a1a2e; padding: 10px; border-radius: 8px; text-align: center; border-left: 3px solid #0f0; }
+        .error { color: #f44; }
+        .success { color: #4f4; }
+        .info { color: #ffa; }
+        button { background: #2a2a4a; border: 1px solid #0f0; padding: 8px 16px; margin: 5px; border-radius: 8px; color: #0f0; cursor: pointer; }
+        input { background: #1a1a2e; border: 1px solid #333; padding: 8px; border-radius: 8px; color: #0f0; width: 300px; }
+        .request-id { color: #88f; }
+    </style>
+</head>
+<body>
+    <h2>🚀 AudioDisk - Маршрутизатор (ПК)</h2>
+    <div>
+        <label>🔌 WebSocket URL: </label>
+        <input type="text" id="wsUrl" value="ws://localhost:8000/ws/router" style="width: 350px;">
+        <button onclick="connectWebSocket()">Подключиться</button>
+        <button onclick="clearLog()">Очистить</button>
+    </div>
+    <div class="log" id="log"></div>
+    <div class="status" id="status">⏳ Ожидание подключения к Python...</div>
+
+    <script>
+        let ws = null;
+        let pendingRequests = new Map();
+        let requestId = 0;
+
+        function addLog(msg, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#f44' : (type === 'success' ? '#4f4' : '#ffa');
+            logDiv.innerHTML += `<div style="color: ${color}">[${time}] ${msg}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(msg, isError = false) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = msg;
+            statusDiv.style.borderLeftColor = isError ? '#f44' : '#0f0';
+        }
+
+        async function connectWebSocket() {
+            const url = document.getElementById('wsUrl').value;
+            if (ws) ws.close();
+            
+            ws = new WebSocket(url);
+            
+            ws.onopen = () => {
+                addLog('✅ Подключен к Python серверу', 'success');
+                updateStatus('🟢 Соединение с Python активно | Порт 8000');
+            };
+            
+            ws.onmessage = (event) => {
+                const response = JSON.parse(event.data);
+                const pending = pendingRequests.get(response.id);
+                if (pending) {
+                    pending.resolve(response.result);
+                    pendingRequests.delete(response.id);
+                    addLog(`📨 Ответ #${response.id}: ${JSON.stringify(response.result).substring(0, 100)}`, 'success');
+                }
+            };
+            
+            ws.onerror = (error) => {
+                addLog(`❌ Ошибка WebSocket: ${error}`, 'error');
+                updateStatus('🔴 Ошибка соединения с Python', true);
+            };
+            
+            ws.onclose = () => {
+                addLog('⚠️ Соединение с Python закрыто', 'error');
+                updateStatus('🔴 Отключен от Python. Перезапустите сервер!', true);
+            };
+        }
+
+        function sendRequest(action, params) {
+            return new Promise((resolve, reject) => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    reject(new Error('WebSocket не подключен'));
+                    return;
+                }
+                
+                const id = ++requestId;
+                pendingRequests.set(id, { resolve, reject });
+                
+                const message = { id, action, ...params };
+                ws.send(JSON.stringify(message));
+                addLog(`📤 Запрос #${id}: ${action} ${JSON.stringify(params).substring(0, 80)}`, 'info');
+                
+                setTimeout(() => {
+                    if (pendingRequests.has(id)) {
+                        pendingRequests.delete(id);
+                        reject(new Error('Timeout'));
+                    }
+                }, 30000);
+            });
+        }
+
+        // Делаем функции глобальными для консоли
+        window.sendRequest = sendRequest;
+        window.ws = () => ws;
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            addLog('Лог очищен', 'info');
+        }
+
+        // Автоподключение при загрузке
+        setTimeout(() => connectWebSocket(), 500);
+        
+        addLog('🚀 Маршрутизатор запущен. Ожидание подключения к Python...', 'info');
+        addLog('💡 Используйте консоль: sendRequest("register", {login:"test", password:"123"})', 'info');
+    </script>
+</body>
+</html>
